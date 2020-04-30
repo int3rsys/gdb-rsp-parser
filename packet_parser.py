@@ -1,9 +1,12 @@
 import binascii
-#Todo: try and except for every function
+import string
+#TODO: try and except for every function
+#TODO: if raw data is printable, convert it to ascii
 
 class parser():
     def __init__(self, packet):
-        self.packet = packet
+        self.packet = binascii.unhexlify(packet)
+        self.original_packet = packet
         self.general_mappings = {
             ord(b'!'): lambda: self.return_msg(b"Extended-Mode enabled"),
             ord(b'?'): lambda: self.return_msg(b"Target halted"),
@@ -135,12 +138,15 @@ class parser():
             b'Z1': lambda: self.set_bp(True, 'h'),
             b'z1': lambda: self.set_bp(False, 'h'),
             b'Z2': lambda: self.set_bp(True, 'w'),
-            b'z3': lambda: self.set_bp(False, 'w'),
+            b'z2': lambda: self.set_bp(False, 'w'),
             b'Z3': lambda: self.set_bp(True, 'wr'),
             b'z3': lambda: self.set_bp(False, 'wr'),
             b'Z4': lambda: self.set_bp(True, 'aw'),
             b'z4': lambda: self.set_bp(False, 'aw')
         }
+
+    def is_printable(self,str):
+        return all(c in string.printable for c in str)
 
     def set_bp(self,op,tp):
         packet = self.packet.split(b',')
@@ -299,9 +305,14 @@ class parser():
                 return b"GDB is prepared to serve symbol lookup requests"
             else:
                 sym_val,sym_name = self.packet.split(b':')
+                try:
+                    if self.is_printable(binascii.unhexlify(sym_name).decode()):
+                        sym_name = binascii.unhexlify(sym_name)
+                except:
+                    pass
                 return b"Set the value of " + sym_name + b" to " + sym_val
         except:
-            return b"Unrecognized/Unsupported command for qsymbol lookup: " + self.packet
+            return b"Unrecognized/Unsupported command for (qsymbol lookup): " + self.expand_stream(self.packet)
     def query_feature(self):
         features = self.packet.split(b';')
         msg=b"Features supported by GDB: "
@@ -364,7 +375,16 @@ class parser():
 
     def file_operation(self):
         operation,params = self.packet[1:].split(b':')
-        return b"File operation: " + operation + b" with params: " + params
+        params = params.split(b',')
+        if operation == b'open':
+            for i in range(len(params)):
+                try:
+                    _p = binascii.unhexlify(params[i]).decode()
+                    if self.is_printable(_p):
+                        params[i] = _p.encode()
+                except:
+                    pass
+        return b"File operation: " + operation + b" with params: " + b','.join(params)
 
     def resume_inferior(self):
         if b':' in self.packet:
@@ -455,11 +475,13 @@ class parser():
         else:
             packet = self.packet[1:].split(b';')
             return_val = packet[0]
-            attachment = self.expand_stream(packet[1])
-            return b"return value = " +  return_val + b" raw data: " + binascii.hexlify(attachment.replace(b'}',b'')) #TODO: remove the hexlify?
+            packet = b','.join(packet[1:])
+            attachment = self.expand_stream(packet)
+            return b"return value = " +  bytes(return_val) + b" raw data: " + binascii.hexlify(attachment.replace(b'}',b'')) #TODO: remove the hexlify?
 
     def expand_stream(self,datastream):
         expanded=b""
+        datastream = datastream.replace(b'\r',b'').replace(b'\n',b'')
         i=0
         while i < len(datastream):
             if(datastream[i] == ord(b'*') and datastream[i-1] != ord(b'}') and i+1 != len(datastream)):
@@ -468,7 +490,7 @@ class parser():
             else:
                 expanded+=chr(datastream[i]).encode()
                 i+=1
-        return expanded
+        return expanded.replace(b' ',b'') #TODO: maybe not necessary
 
     def return_msg(self,msg):
         return msg
@@ -538,12 +560,7 @@ class parser():
                 if gen_command in self.general_mappings:
                     return self.general_mappings[gen_command]
                 else:
-                    return lambda: self.return_msg(b"[*] Response: " + self.expand_stream(o_command))
+                    expanded = self.expand_stream(binascii.unhexlify(self.original_packet))
+                    return lambda: self.return_msg(b"[*] Response: " + expanded)
         except:
-            return lambda: self.return_msg(b"Unrecognized/Unsupported command: " + self.packet)
-
-    # def get_tp_command(self):
-    #     tpcommand = self.packet.split(b':')[0]
-    #     self.packet = self.packet[len(tpcommand)+1:]
-    #     return tpcommand
-
+            return lambda: self.return_msg(b"Unrecognized/Unsupported command: " + self.expand_stream(binascii.unhexlify(self.original_packet)))
