@@ -1,5 +1,5 @@
 import binascii
-import packet_parser
+from gynvael_challanges import packet_parser
 
 NOT_COMPLETE_SEQUENCE=255
 BAD_PACKET=254
@@ -36,12 +36,12 @@ def decode_data(data):
     data = data.split('\n')
     return data
 
-data = decode_data(readfile('<yourfilehere>')) #file should contain raw hex data
+data = decode_data(readfile(r'<input_file>')) #file should contain raw hex data
 partial_packet=""
 ignore_packet = False
 response=False
 
-with open(r'a.out','wb') as of:
+with open(r'<output_file>','wb') as of:
     for packet in data:
         if partial_packet != "":
             # The packet contains an escape char
